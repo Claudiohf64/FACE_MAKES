@@ -46,6 +46,7 @@
         import { VRMLoaderPlugin } from '@pixiv/three-vrm';
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+        // --- 4. Configuración de la Escena 3D ---
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x333333);
@@ -65,18 +66,21 @@
         controls.update();
         const clock = new THREE.Clock();
         let currentVrm = null;
-        let blendshapeTargets = null;
+        let blendshapeTargets = null; // Almacén para los datos de Kalidokit
+
+        // Función de suavizado (Interpolación Lineal)
         const lerp = (start, end, alpha) => {
             return start * (1 - alpha) + end * alpha;
         };
 
+        // --- 5. Cargar el Avatar .vrm ---
         const loader = new GLTFLoader();
         loader.register((parser) => {
             return new VRMLoaderPlugin(parser);
         });
         
         loader.load(
-            '/static/changli.vrm',
+            '/static/changli.vrm', 
             (gltf) => {
                 const vrm = gltf.userData.vrm;
                 console.log("¡Avatar cargado!", vrm);
@@ -87,6 +91,7 @@
             (error) => console.error("¡ERROR AL CARGAR EL MODELO!", error)
         );
 
+        // --- 6. Conexión WebSocket ---
         const statusElement = document.getElementById('status');
         const socket = io('http://localhost:5002'); 
 
@@ -102,6 +107,7 @@
             statusElement.classList.remove('connected');
         });
 
+        // --- 7. Recibir y Guardar Datos ---
         socket.on('update_data', (data) => {
             document.getElementById('webcam-feed').src = 'data:image/jpeg;base64,' + data.frame;
             const landmarks = data.mesh; 
@@ -113,12 +119,14 @@
             });
         });
 
+        // --- 8. Bucle de Animación (¡MAPEADO CORREGIDO!) ---
         function animate() {
             requestAnimationFrame(animate);
 
             if (currentVrm && blendshapeTargets) {
                 const expressionManager = currentVrm.expressionManager;
                 
+                // --- 1. OJOS (Guiño) ---
                 let blinkLeftTarget = 1.0 - (blendshapeTargets.eye.l || 0);
                 let currentBlinkLeft = expressionManager.getValue('blinkLeft') || 0;
                 expressionManager.setValue('blinkLeft', lerp(currentBlinkLeft, blinkLeftTarget, 0.3));
@@ -127,40 +135,53 @@
                 let currentBlinkRight = expressionManager.getValue('blinkRight') || 0;
                 expressionManager.setValue('blinkRight', lerp(currentBlinkRight, blinkRightTarget, 0.3));
 
-                let mouthOpenTarget = (blendshapeTargets.mouth.shape.A || 0) * 1.5; 
-                let currentMouthOpen = expressionManager.getValue('a') || 0;
-                expressionManager.setValue('a', lerp(currentMouthOpen, mouthOpenTarget, 0.3));
+                // --- 2. BOCA (CON GANANCIA + NOMBRES CORRECTOS) ---
+                
+                const BOCA_GAIN = 3.0; // ¡Puedes ajustar este valor!
 
+                // Kalidokit 'A' -> VRM 'aa'
+                let mouthAATarget = Math.min(1.0, (blendshapeTargets.mouth.shape.A || 0) * BOCA_GAIN); 
+                let currentMouthAA = expressionManager.getValue('aa') || 0;
+                expressionManager.setValue('aa', lerp(currentMouthAA, mouthAATarget, 0.3));
+
+                // Kalidokit 'I' -> VRM 'ih'
+                let mouthIHTarget = (blendshapeTargets.mouth.shape.I || 0);
+                let currentMouthIH = expressionManager.getValue('ih') || 0;
+                expressionManager.setValue('ih', lerp(currentMouthIH, mouthIHTarget, 0.3));
+                
+                // Kalidokit 'U' -> VRM 'ou'
+                let mouthOUTarget = (blendshapeTargets.mouth.shape.U || 0);
+                let currentMouthOU = expressionManager.getValue('ou') || 0;
+                expressionManager.setValue('ou', lerp(currentMouthOU, mouthOUTarget, 0.3));
+
+                // Kalidokit 'E' -> VRM 'ee'
+                let mouthEETarget = (blendshapeTargets.mouth.shape.E || 0);
+                let currentMouthEE = expressionManager.getValue('ee') || 0;
+                expressionManager.setValue('ee', lerp(currentMouthEE, mouthEETarget, 0.3));
+                
+                // Kalidokit 'O' -> VRM 'oh'
+                let mouthOHTarget = (blendshapeTargets.mouth.shape.O || 0);
+                let currentMouthOH = expressionManager.getValue('oh') || 0;
+                expressionManager.setValue('oh', lerp(currentMouthOH, mouthOHTarget, 0.3));
+
+                // --- 3. SONRISA ---
+                // (Seguimos asumiendo que 'joy' es el nombre, ¡es el estándar!)
                 let smileTarget = blendshapeTargets.mouth.smile || 0;
                 let currentSmile = expressionManager.getValue('joy') || 0;
                 expressionManager.setValue('joy', lerp(currentSmile, smileTarget, 0.3));
 
-                let mouthITarget = blendshapeTargets.mouth.shape.I || 0;
-                let currentMouthI = expressionManager.getValue('i') || 0;
-                expressionManager.setValue('i', lerp(currentMouthI, mouthITarget, 0.3));
-                
-                let mouthUTarget = blendshapeTargets.mouth.shape.U || 0;
-                let currentMouthU = expressionManager.getValue('u') || 0;
-                expressionManager.setValue('u', lerp(currentMouthU, mouthUTarget, 0.3));
-
-                let mouthETarget = blendshapeTargets.mouth.shape.E || 0;
-                let currentMouthE = expressionManager.getValue('e') || 0;
-                expressionManager.setValue('e', lerp(currentMouthE, mouthETarget, 0.3));
-                
-                let mouthOTarget = blendshapeTargets.mouth.shape.O || 0;
-                let currentMouthO = expressionManager.getValue('o') || 0;
-                expressionManager.setValue('o', lerp(currentMouthO, mouthOTarget, 0.3));
-
+                // Aplicamos los cambios (API v0.0)
                 expressionManager.update();
             }
             
+            // Actualiza físicas (pelo) y dibuja la escena
             if (currentVrm) {
                 currentVrm.update(clock.getDelta());
             }
             renderer.render(scene, camera);
         }
 
-        animate();
+        animate(); // Iniciar el bucle de renderizado
 
     </script>
 </body>
