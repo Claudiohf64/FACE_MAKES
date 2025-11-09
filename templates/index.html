@@ -14,30 +14,24 @@
             color: white;
         }
         canvas { display: block; width: 100vw; height: 100vh; }
-        
-        /* indicador de estado */
         #status {
             position: fixed; top: 10px; left: 10px; padding: 5px 10px;
             background: rgba(255, 0, 0, 0.7); color: white;
             border-radius: 5px; z-index: 100;
         }
         #status.connected { background: rgba(0, 255, 0, 0.7); }
-        
-        /* video de la webcam (16:9) */
         #webcam-feed {
             position: fixed; 
             bottom: 20px;
             right: 20px;
             width: 320px; 
-            height: 180px; /* 16:9 */
+            height: 180px;
             border: 2px solid white; 
             background: #000; 
             z-index: 101;
             object-fit: cover;
             border-radius: 5px;
         }
-        
-        /* selector de avatar */
         #model-selector-container {
             position: fixed;
             top: 10px;
@@ -90,6 +84,7 @@
         import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
         // 1 configuracion de la escena 3d
+        // ... (todo es igual aqui) ...
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x333333);
@@ -112,35 +107,53 @@
         // 2 variables globales de estado
         let currentVrm = null;
         let solvedFace = null;
-        let solvedPose = null;
         let solvedLeftHand = null;
         let solvedRightHand = null;
-        let currentGesture = "nada"; // gesto por defecto
+        let currentGesture = "nada";
+        let solvedPoseRotations = {};
 
-        // 3 utilidades (vectores, quaternions, lerp)
+        // 3 utilidades
         const euler = new THREE.Euler();
         const targetQuaternion = new THREE.Quaternion();
         const headEuler = new THREE.Euler();
         const headQuaternion = new THREE.Quaternion();
+        const poseQuaternion = new THREE.Quaternion();
 
         const lerp = (start, end, alpha) => {
             return start * (1 - alpha) + end * alpha;
         };
         
+        // --- A-POSE DE DESCANSO ---
+        const ANGULO_A_POSE_GRADOS = 80.0;
+        const ANGULO_A_POSE_RAD = THREE.MathUtils.degToRad(ANGULO_A_POSE_GRADOS);
+        const aPoseLeftUpperArm = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, ANGULO_A_POSE_RAD));
+        const aPoseRightUpperArm = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -ANGULO_A_POSE_RAD));
+        const aPoseNeutral = new THREE.Quaternion().identity(); 
+        const restPoseMap = {
+            'Spine': aPoseNeutral,
+            'LeftUpperArm': aPoseLeftUpperArm,
+            'RightUpperArm': aPoseRightUpperArm,
+            'LeftLowerArm': aPoseNeutral,
+            'RightLowerArm': aPoseNeutral
+        };
+        // --- FIN DE A-POSE ---
+        
         // 4 carga del avatar vrm
+        // ... (todo es igual aqui) ...
         const loader = new GLTFLoader();
         loader.register((parser) => {
             return new VRMLoaderPlugin(parser);
         });
 
         // 5 lista de avatares vrm
-        // modifica esto con tus modelos en la carpeta /static
+        // ... (todo es igual aqui) ...
         const models = [
-            { name: "Persona (Defecto)", path: "/static/persona.vrm" },
-            // { name: "Avatar 2", path: "/static/avatar2.vrm" },
+            { name: "Persona (Defecto)", path: "/static/others/chino.vrm" },
+            { name: "Changli", path: "/static/changli.vrm" },
         ];
 
         // 6 logica del selector de avatar
+        // ... (todo es igual aqui) ...
         const selector = document.getElementById('model-selector');
         
         function populateModelSelector() {
@@ -158,12 +171,10 @@
         });
 
         function loadModel(modelPath) {
-            // si ya hay un modelo, lo quitamos de la escena
             if (currentVrm) {
                 scene.remove(currentVrm.scene);
                 currentVrm = null;
             }
-
             console.log(`cargando modelo: ${modelPath}`);
             loader.load(
                 modelPath,
@@ -174,12 +185,13 @@
                     vrm.scene.rotation.set(0, 0, 0); 
                     scene.add(vrm.scene);
                 },
-                null, // progreso omitido
+                null,
                 (error) => console.error("ERROR AL CARGAR EL MODELO!", error)
             );
         }
 
         // 7 conexion websocket
+        // ... (todo es igual aqui) ...
         const statusElement = document.getElementById('status');
         const socket = io('http://localhost:5002');
 
@@ -190,16 +202,16 @@
         });
 
         // 8 recibir y resolver todos los datos
+        // ... (todo es igual aqui) ...
         socket.on('update_data', (data) => {
             document.getElementById('webcam-feed').src = 'data:image/jpeg;base64,' + data.frame;
 
             const face_landmarks = data.face_mesh;
-            const pose_world_landmarks = data.pose_world_mesh; 
             const left_hand_landmarks = data.left_hand_mesh;
             const right_hand_landmarks = data.right_hand_mesh;
-            currentGesture = data.gesture; // "abierta", "cerrada", "like", o "nada"
+            currentGesture = data.gesture;
+            const pose_rotations = data.pose_rotations;
 
-            // resolver cara (para expresiones y cabeza)
             try {
                 if (face_landmarks && face_landmarks.length > 0) {
                     solvedFace = window.Kalidokit.Face.solve(face_landmarks, { runtime: 'mediapipe' });
@@ -210,19 +222,12 @@
                 solvedFace = null;
             }
             
-            // resolver pose
-            if (pose_world_landmarks && pose_world_landmarks.length > 0) { 
-                solvedPose = window.Kalidokit.Pose.solve(pose_world_landmarks, { 
-                    runtime: 'mediapipe',
-                    enableLegs: false,
-                    useUpperBodyOnly: true,
-                    flip: true // clave por el flip en python
-                });
+            if (pose_rotations) {
+                solvedPoseRotations = pose_rotations;
             } else {
-                solvedPose = null;
+                solvedPoseRotations = {};
             }
 
-            // resolver manos (para dedos)
             if (left_hand_landmarks && left_hand_landmarks.length > 0) {
                 solvedLeftHand = window.Kalidokit.Hand.solve(left_hand_landmarks, 'Left');
             } else {
@@ -235,51 +240,14 @@
             }
         });
 
-        // 9 funciones de rigging (animacion del avatar)
-
-        // mapeo especial para el pulgar
+        // 9 funciones de rigging
+        // ... (rigHandPose es igual) ...
         const THUMB_BONE_MAP = {
             "LeftThumbProximal": "leftThumbMetacarpal",
             "LeftThumbIntermediate": "leftThumbProximal",
             "RightThumbProximal": "rightThumbMetacarpal",
             "RightThumbIntermediate": "rightThumbProximal"
         };
-
-        // funcion para aplicar rotaciones de cuerpo y caderas
-        const rigBodyPose = (vrm, poseData) => {
-            if (!vrm || !poseData) return;
-            const rig = vrm.humanoid;
-            const alpha = 0.3; // suavizado
-
-            for (const [kalidokitName, data] of Object.entries(poseData)) {
-                
-                // ignorar cabeza, torso y brazos
-                if (kalidokitName === "Head" || kalidokitName === "Neck" || kalidokitName === "Chest" || kalidokitName === "Spine" ||
-                    kalidokitName === "LeftUpperArm" || kalidokitName === "LeftLowerArm" || kalidokitName === "LeftHand" ||
-                    kalidokitName === "RightUpperArm" || kalidokitName === "RightLowerArm" || kalidokitName === "RightHand"
-                ) {
-                    continue;
-                }
-                
-                const vrmBoneName = window.Kalidokit.Utils.poseMap[kalidokitName];
-                const bone = rig.getNormalizedBoneNode(vrmBoneName);
-                if (!bone) continue; 
-
-                let finalQuaternion = null;
-                if (data && data.isQuaternion) {
-                    finalQuaternion = data;
-                }
-                else if (data && data.rotation && data.rotation.isQuaternion) {
-                    finalQuaternion = data;
-                }
-                
-                if (bone && finalQuaternion) {
-                    bone.quaternion.slerp(finalQuaternion, alpha);
-                }
-            }
-        };
-
-        // funcion para aplicar rotaciones de manos (dedos)
         const rigHandPose = (vrm, handData) => {
             if (!vrm || !handData) return;
             const rig = vrm.humanoid;
@@ -287,10 +255,8 @@
 
             for (const [kalidokitName, rotation] of Object.entries(handData)) {
                 let vrmBoneName = kalidokitName.charAt(0).toLowerCase() + kalidokitName.slice(1);
-
                 const mappedName = THUMB_BONE_MAP[kalidokitName];
                 if (mappedName) vrmBoneName = mappedName;
-                
                 const bone = rig.getNormalizedBoneNode(vrmBoneName);
 
                 if (bone && rotation &&
@@ -315,45 +281,34 @@
                 const rig = currentVrm.humanoid;
                 
                 // parte a: mover la cara (expresiones y cabeza/torso)
+                // ... (todo es igual aqui) ...
                 if (solvedFace) {
-                    // 1 expresiones faciales
                     let blinkLeftTarget = 1.0 - (solvedFace.eye.l || 0);
                     expressionManager.setValue('blinkLeft', lerp(expressionManager.getValue('blinkLeft') || 0, blinkLeftTarget, 0.3));
                     let blinkRightTarget = 1.0 - (solvedFace.eye.r || 0);
                     expressionManager.setValue('blinkRight', lerp(expressionManager.getValue('blinkRight') || 0, blinkRightTarget, 0.3));
-                    
                     const BOCA_GAIN = 3.0;
                     let mouthAATarget = Math.min(1.0, (solvedFace.mouth.shape.A || 0) * BOCA_GAIN);
                     expressionManager.setValue('aa', lerp(expressionManager.getValue('aa') || 0, mouthAATarget, 0.3));
-                    
                     expressionManager.setValue('ih', lerp(expressionManager.getValue('ih') || 0, solvedFace.mouth.shape.I || 0, 0.3));
                     expressionManager.setValue('ou', lerp(expressionManager.getValue('ou') || 0, solvedFace.mouth.shape.U || 0, 0.3));
                     expressionManager.setValue('ee', lerp(expressionManager.getValue('ee') || 0, solvedFace.mouth.shape.E || 0, 0.3));
                     expressionManager.setValue('oh', lerp(expressionManager.getValue('oh') || 0, solvedFace.mouth.shape.O || 0, 0.3));
-                    
-                    // mover cabeza, cuello y torso en cadena
                     const headBone = rig.getNormalizedBoneNode('head');
                     const neckBone = rig.getNormalizedBoneNode('neck');
                     const chestBone = rig.getNormalizedBoneNode('chest');
                     const spineBone = rig.getNormalizedBoneNode('spine');
                     const alpha = 0.3; 
-
                     if (headBone && solvedFace.head) {
                         const headRot = solvedFace.head;
                         headEuler.set(headRot.x, headRot.y, headRot.z, 'YXZ');
                         headQuaternion.setFromEuler(headEuler);
-
-                        // 1 mover la cabeza
                         headBone.quaternion.slerp(headQuaternion, alpha);
-
-                        // 2 mover el cuello
                         if (neckBone) {
                             headEuler.set(headRot.x * 0.5, headRot.y * 0.5, headRot.z * 0.5, 'YXZ');
                             targetQuaternion.setFromEuler(headEuler);
                             neckBone.quaternion.slerp(targetQuaternion, alpha);
                         }
-                        
-                        // 3 mover el pecho/espina
                         if (chestBone) {
                             headEuler.set(headRot.x * 0.3, headRot.y * 0.2, headRot.z * 0.3, 'YXZ');
                             targetQuaternion.setFromEuler(headEuler);
@@ -367,12 +322,28 @@
                     }
                 }
 
-                // parte b: mover el cuerpo (piernas/caderas)
-                if (solvedPose) {
-                    rigBodyPose(currentVrm, solvedPose);
+                // parte b: logica de cuerpo (brazos/caderas) con reseteo
+                // ... (todo es igual aqui) ...
+                const POSE_BONES = ['Spine', 'LeftUpperArm', 'LeftLowerArm', 'RightUpperArm', 'RightLowerArm'];
+                const alpha = 0.3; // suavizado
+                if (rig) {
+                    for (const boneName of POSE_BONES) {
+                        const vrmBoneName = boneName.charAt(0).toLowerCase() + boneName.slice(1);
+                        const bone = rig.getNormalizedBoneNode(vrmBoneName);
+                        if (!bone) continue;
+                        if (solvedPoseRotations[boneName]) {
+                            const quatArray = solvedPoseRotations[boneName];
+                            poseQuaternion.fromArray(quatArray);
+                            bone.quaternion.slerp(poseQuaternion, alpha);
+                        } else {
+                            const restQuat = restPoseMap[boneName] || aPoseNeutral;
+                            bone.quaternion.slerp(restQuat, alpha * 0.5); 
+                        }
+                    }
                 }
 
                 // parte c: mover las manos (dedos)
+                // ... (todo es igual aqui) ...
                 if (solvedLeftHand) {
                     rigHandPose(currentVrm, solvedLeftHand); 
                 }
@@ -380,56 +351,35 @@
                     rigHandPose(currentVrm, solvedRightHand);
                 }
                 
-                // parte d: forzar pose de brazos (cactus "l")
-                const armAlpha = 0.1; // suavizado para los brazos
-                const leftUpperArm = rig.getNormalizedBoneNode('leftUpperArm');
-                const rightUpperArm = rig.getNormalizedBoneNode('rightUpperArm');
-                const leftLowerArm = rig.getNormalizedBoneNode('leftLowerArm');
-                const rightLowerArm = rig.getNormalizedBoneNode('rightLowerArm');
-                
-                // hombros
-                if (leftUpperArm) {
-                    targetQuaternion.setFromEuler(euler.set(0, 0, Math.PI / 2.5)); 
-                    leftUpperArm.quaternion.slerp(targetQuaternion, armAlpha);
-                }
-                if (rightUpperArm) {
-                    targetQuaternion.setFromEuler(euler.set(0, 0, -Math.PI / 2.5));
-                    rightUpperArm.quaternion.slerp(targetQuaternion, armAlpha);
-                }
-                
-                // codos
-                if (leftLowerArm) {
-                    targetQuaternion.setFromEuler(euler.set(0, -Math.PI / 2, 0));
-                    leftLowerArm.quaternion.slerp(targetQuaternion, armAlpha);
-                }
-                if (rightLowerArm) {
-                    targetQuaternion.setFromEuler(euler.set(0, Math.PI / 2, 0));
-                    rightLowerArm.quaternion.slerp(targetQuaternion, armAlpha);
-                }
-                
-                // parte e: reaccionar al gesto de la cnn
+                // --- PARTE E: REACCIONAR AL GESTO (¡MODIFICADA PARA PRUEBA!) ---
                 
                 // gesto: cerrada -> expresion: angry (enojado)
-                if (currentGesture === "cerrada") { // actualizado de "fist" a "cerrada"
+                if (currentGesture === "cerrada") {
                     expressionManager.setValue('angry', lerp(expressionManager.getValue('angry') || 0, 1.0, 0.1));
                 } else {
                     expressionManager.setValue('angry', lerp(expressionManager.getValue('angry') || 0, 0.0, 0.2));
                 }
                 
-                // gesto "like" usa "fun" (divertido/ojos curvos)
-                let smileTarget = (solvedFace && solvedFace.mouth.smile) ? solvedFace.mouth.smile : 0;
                 // 'joy' (sonrisa) es controlado por la cara
+                let smileTarget = (solvedFace && solvedFace.mouth.smile) ? solvedFace.mouth.smile : 0;
                 expressionManager.setValue('joy', lerp(expressionManager.getValue('joy') || 0, smileTarget, 0.2)); 
 
+                
+                // --- ¡AQUI ESTA LA PRUEBA! ---
+                // Forzamos el valor 'fun' a 1.0 (100%) sin importar el gesto.
+                // expressionManager.setValue('like', 1.0);
+
+                // Esta es la logica original que estamos ignorando temporalmente:
                 if (currentGesture === "like") {
-                    // 'fun' (ojos curvos) es controlado por el gesto 'like'
-                    expressionManager.setValue('fun', lerp(expressionManager.getValue('fun') || 0, 1.0, 0.1));
+                    expressionManager.setValue('like', lerp(expressionManager.getValue('like') || 0, 1.0, 0.1));
                 } else {
-                    expressionManager.setValue('fun', lerp(expressionManager.getValue('fun') || 0, 0.0, 0.2));
+                    expressionManager.setValue('like', lerp(expressionManager.getValue('like') || 0, 0.0, 0.2));
                 }
+                // --- FIN DE LA PRUEBA ---
+
 
                 // gesto: abierta -> expresion: surprised (sorprendido)
-                if (currentGesture === "abierta") { // actualizado de "open" a "abierta"
+                if (currentGesture === "abierta") {
                     expressionManager.setValue('surprised', lerp(expressionManager.getValue('surprised') || 0, 1.0, 0.1));
                 } else {
                     expressionManager.setValue('surprised', lerp(expressionManager.getValue('surprised') || 0, 0.0, 0.2));
@@ -447,9 +397,9 @@
         }
 
         // 11 iniciar la aplicacion
-        populateModelSelector(); // llena el menu desplegable
-        loadModel(models[0].path); // carga el primer modelo de la lista
-        animate(); // inicia el bucle de renderizado
+        populateModelSelector();
+        loadModel(models[0].path);
+        animate();
 
     </script>
 </body>
