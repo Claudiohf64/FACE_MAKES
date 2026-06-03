@@ -16,3 +16,5 @@ proyecto semestre 4
 ![Demostracion de surprise](./evidencia/surprised_02.gif)
 ![Demostracion de surprise](./evidencia/surprised.gif)
 
+https://www.kaggle.com/datasets/vrajesh0sharma7/sign-language
+
